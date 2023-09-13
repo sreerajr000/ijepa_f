@@ -3,10 +3,13 @@ import torchvision.transforms as transforms
 from PIL import ImageFilter, Image
 from torch.utils.data import Dataset
 import os
+import pandas as pd
 from glob import glob
-from logging import getLogger
 from sklearn.model_selection import train_test_split
-logger = getLogger()
+import logging
+logging.getLogger("lightning.pytorch").setLevel(logging.INFO)
+
+logger = logging.getLogger("lightning.pytorch.core")
 
 def make_transforms(
     crop_size=224,
@@ -18,7 +21,7 @@ def make_transforms(
     normalization=((0.485, 0.456, 0.406),
                    (0.229, 0.224, 0.225))
 ):
-    logger.info('making data transforms')
+    logger.info('Making data transforms')
 
     def get_color_distortion(s=1.0):
         # s is the strength of color distortion.
@@ -68,8 +71,8 @@ class FaceDataset(Dataset):
             color_distortion=cfg.data.use_color_distortion,
             color_jitter=cfg.data.color_jitter_strength)
 
-        self.files = glob(os.path.join(cfg.data.root_path, cfg.data.image_folder)+'/*')
-        train_ds, test_ds = train_test_split(self.files, test_size=0.1)
+        self.files = pd.read_csv(cfg.data.csv_dataset)
+        train_ds, test_ds = train_test_split(self.files, test_size=0.01)
         self.files = train_ds if train else test_ds
         logger.info(f'No. of images loaded: {len(self.files)}')
         
@@ -77,6 +80,6 @@ class FaceDataset(Dataset):
         return len(self.files)
     
     def __getitem__(self, idx):
-        img = Image.open(self.files[idx])
+        img = Image.open(self.files.iloc[idx].file)
         img = self.transform(img)
         return img, 0 # Dummy Label

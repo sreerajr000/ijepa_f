@@ -10,7 +10,6 @@ from torch.utils.data import DataLoader
 from data import FaceDataset
 from utils import MBMaskCollator, to_simplenamespace
 
-torch.set_float32_matmul_precision('high')
 @click.command()
 @click.option('--cfg', default='configs/in1k_vith14_ep300.yaml')
 @click.option('--p', default=False, help='Enable Profiling')
@@ -45,7 +44,6 @@ def main(cfg, p):
     val_loader = DataLoader(
         FaceDataset(cfg, train=False), 
         batch_size=cfg.data.batch_size,
-        shuffle=True,
         num_workers=cfg.data.num_workers,
         pin_memory=cfg.data.pin_mem,
         collate_fn=collator,
@@ -62,23 +60,22 @@ def main(cfg, p):
         save_last=True,
         save_top_k=20
     )
-    device_stats = DeviceStatsMonitor()
+    # device_stats = DeviceStatsMonitor()
 
-    callbacks = [checkpoint_callback, device_stats]
+    callbacks = [checkpoint_callback]
 
     model = TrainableModel(cfg, ipe)
 
     trainer = pl.Trainer(
         accelerator='gpu',
-        strategy=DDPStrategy(static_graph=False, process_group_backend="nccl"),
-        devices=1,
+        strategy=DDPStrategy(static_graph=False, process_group_backend="gloo"),
+        devices=[0, 1],
         precision='16-mixed',
         callbacks=callbacks,
         max_epochs=cfg.optimization.epochs,
         accumulate_grad_batches=cfg.data.total_batch_size//cfg.data.batch_size,
         benchmark=True,
         profiler=p,
-        log_every_n_steps=1
     )
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 

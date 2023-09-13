@@ -19,6 +19,7 @@ from utils import (
     apply_masks
 )
 
+import xformers.ops as xops
 
 def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
     """
@@ -135,6 +136,15 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
+        # self.num_heads = num_heads
+        # head_dim = dim // num_heads
+        # self.scale = qk_scale or head_dim ** -0.5
+
+        # self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        # self.attn_drop = nn.Dropout(attn_drop)
+        # self.proj = nn.Linear(dim, dim)
+        # self.proj_drop = nn.Dropout(proj_drop)
+
     def forward(self, x):
         qkv = self.qkv(x) 
         batch_size = qkv.size(0)
@@ -146,12 +156,27 @@ class Attention(nn.Module):
         key = key.view(batch_size, -1, self.num_heads, head_dim).transpose(1, 2)
         value = value.view(batch_size, -1, self.num_heads, head_dim).transpose(1, 2)
 
-        x = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=self.attn_drop, is_causal=False)
+        # x = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=self.attn_drop, is_causal=False)
+        x = xops.memory_efficient_attention(query, key, value, p=self.attn_drop)
         x = x.transpose(1, 2).reshape(batch_size, -1, self.num_heads * self.head_dim)
 
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
+    
+    # def forward(self, x):
+    #     B, N, C = x.shape
+    #     qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+    #     q, k, v = qkv[0], qkv[1], qkv[2]
+
+    #     attn = (q @ k.transpose(-2, -1)) * self.scale
+    #     attn = attn.softmax(dim=-1)
+    #     attn = self.attn_drop(attn)
+
+    #     x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+    #     x = self.proj(x)
+    #     x = self.proj_drop(x)
+    #     return x, attn
 
 class Block(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,

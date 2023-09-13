@@ -3,9 +3,10 @@ import torch
 from multiprocessing import Value
 from types import SimpleNamespace
 import loralib
-from logging import getLogger
-logger = getLogger()
+import logging
+logging.getLogger("lightning.pytorch").setLevel(logging.INFO)
 
+logger = logging.getLogger("lightning.pytorch.core")
 
 def apply_masks(x, masks):
     """
@@ -96,6 +97,44 @@ def iterate_modules(model, r=8, lora_alpha=1, lora_dropout=0.0):
                 setattr(model, name, temp)
             iterate_modules(module)
     return model
+
+
+def load_checkpoint(
+    r_path,
+    encoder,
+    predictor,
+    target_encoder,
+):
+    try:
+        checkpoint = torch.load(r_path, map_location=torch.device('cpu'))
+        epoch = checkpoint['epoch']
+
+        # -- loading encoder
+        pretrained_dict = checkpoint['encoder']
+        msg = encoder.load_state_dict(pretrained_dict)
+        logger.info(f'loaded pretrained encoder from epoch {epoch} with msg: {msg}')
+
+        # -- loading predictor
+        pretrained_dict = checkpoint['predictor']
+        msg = predictor.load_state_dict(pretrained_dict)
+        logger.info(f'loaded pretrained encoder from epoch {epoch} with msg: {msg}')
+
+        # -- loading target_encoder
+        if target_encoder is not None:
+            print(list(checkpoint.keys()))
+            pretrained_dict = checkpoint['target_encoder']
+            msg = target_encoder.load_state_dict(pretrained_dict)
+            logger.info(f'loaded pretrained encoder from epoch {epoch} with msg: {msg}')
+
+        del checkpoint
+
+    except Exception as e:
+        logger.info(f'Encountered exception when loading checkpoint {e}')
+        epoch = 0
+
+    return encoder, predictor, target_encoder, epoch
+
+
 
 class DefaultCollator(object):
 

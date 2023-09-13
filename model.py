@@ -3,7 +3,7 @@ import vit
 import torch
 import torch.nn.functional as F
 from torch import optim
-from utils import CosineWDSchedule, WarmupCosineSchedule, trunc_normal_, apply_masks, repeat_interleave_batch, flatten_namespace, iterate_modules
+from utils import CosineWDSchedule, WarmupCosineSchedule, trunc_normal_, apply_masks, repeat_interleave_batch, flatten_namespace, iterate_modules, load_checkpoint
 import copy
 
 class TrainableModel(pl.LightningModule):
@@ -38,12 +38,14 @@ class TrainableModel(pl.LightningModule):
             init_weights(m)
         
         # Enable LORA here after loading pretrained weights, without it does not make sense
+        self.target_encoder = copy.deepcopy(self.encoder) # TODO: Target encoder is basically ignored from the weights, or maybe i could do the other way around load copy target_encoder to encoder
+        # self.encoder, self.predictor, self.target_encoder, epoch = load_checkpoint(cfg.meta.pretrained_weight, self.encoder, self.predictor, self.target_encoder)
         for p in self.encoder.parameters():
             p.requires_grad = False
         for p in self.predictor.parameters():
             p.requires_grad = False
         self.encoder = iterate_modules(self.encoder, r=8)
-        self.predictor = iterate_modules(self.predictor, r=8)
+        # self.predictor = iterate_modules(self.predictor, r=8)
         
         
         self.target_encoder = copy.deepcopy(self.encoder)
@@ -55,27 +57,26 @@ class TrainableModel(pl.LightningModule):
                           for i in range(int(ipe*self.cfg.optimization.epochs*self.cfg.optimization.ipe_scale)+1))
         self.momentum_scheduler_index = 0
 
+    def forward_target(self, imgs, masks_pred, masks_enc):
+        with torch.no_grad():
+            h = self.target_encoder(imgs)
+            h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim
+            B = len(h)
+            # -- create targets (masked regions of h)
+            h = apply_masks(h, masks_pred)
+            h = repeat_interleave_batch(h, B, repeat=len(masks_enc))
+            return h
+        
+    def forward_context(self, imgs, masks_pred, masks_enc):
+        z = self.encoder(imgs, masks_enc)
+        z = self.predictor(z, masks_enc, masks_pred)
+        return z
+
     def forward(self, batch):
         udata, masks_enc, masks_pred = batch
         imgs = udata[0]
-
-        def forward_target():
-            with torch.no_grad():
-                h = self.target_encoder(imgs)
-                h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim
-                B = len(h)
-                # -- create targets (masked regions of h)
-                h = apply_masks(h, masks_pred)
-                h = repeat_interleave_batch(h, B, repeat=len(masks_enc))
-                return h
-        
-        def forward_context():
-            z = self.encoder(imgs, masks_enc)
-            z = self.predictor(z, masks_enc, masks_pred)
-            return z
-
-        h = forward_target()
-        z = forward_context()
+        h = self.forward_target(imgs, masks_pred, masks_enc)
+        z = self.forward_context(imgs, masks_pred, masks_enc)
         return h, z
     
     def training_step(self, batch, batch_idx):
